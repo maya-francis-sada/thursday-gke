@@ -3,11 +3,10 @@ resource "kubernetes_manifest" "thursday_httproute" {
     apiVersion = "gateway.networking.k8s.io/v1"
     kind       = "HTTPRoute"
     metadata = {
-      name      = "thursday-httproute"
+      name      = var.route_name
       namespace = kubernetes_namespace.thursday_ns.metadata[0].name
     }
     spec = {
-      # Attach to the shared Gateway in gateway-infra (from Repo 1)
       parentRefs = [
         {
           group     = "gateway.networking.k8s.io"
