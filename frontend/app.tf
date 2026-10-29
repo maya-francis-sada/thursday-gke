@@ -1,16 +1,15 @@
-# 1. Dedicated Namespace for Thursday App
 resource "kubernetes_namespace" "thursday_ns" {
   metadata {
-    name = "thursday-app"
+    name = var.thursday_namespace
     labels = {
-      "app-routing" = var.app_routing_label
+      "app-routing" = var.app_routing_label # So it can be included in the wordpress gateway
     }
   }
 }
 
 resource "kubernetes_deployment" "thursday_app" {
   metadata {
-    name      = "thursday-app"
+    name      = var.thursday_dep
     namespace = kubernetes_namespace.thursday_ns.metadata[0].name
     labels = {
       app = "thursday-app"
@@ -50,7 +49,7 @@ resource "kubernetes_deployment" "thursday_app" {
 
           readiness_probe {
             http_get {
-              path = "/healthz"
+              path = "/healthz" # App replies with OK when called
               port = 8080
             }
             initial_delay_seconds = 5
