@@ -1,0 +1,103 @@
+name: "Terraform Apply"
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  TF_VERSION: '1.10.5'
+  GAR_REPO: 'us-east1-docker.pkg.dev/modern-nation-510807-e9/thursday-app-repo'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  apply_infra:
+    name: "01 - Apply Infra & Database"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./foundation
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/686738806484/locations/global/workloadIdentityPools/github-actions/providers/github-actions-provider'
+          service_account: 'github-actions@modern-nation-510807-e9.iam.gserviceaccount.com'
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Create tfvars
+        env:
+          RAW_TFVARS: ${{ secrets.TFVARS_FILE }}
+        run: |
+          printf "%s\n" "$RAW_TFVARS" > terraform.tfvars
+
+      - name: Terraform Init
+        run: terraform init -upgrade
+
+      - name: Terraform Apply (Infra)
+        run: terraform apply -auto-approve -input=false
+  build_and_push:
+    name: "02 - Build & Push Docker Image"
+    needs: apply_infra
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/686738806484/locations/global/workloadIdentityPools/github-actions/providers/github-actions-provider'
+          service_account: 'github-actions@modern-nation-510807-e9.iam.gserviceaccount.com'
+
+      # Configure Docker auth natively for Artifact Registry [1]
+      - name: Configure Docker to use Artifact Registry [1]
+        run: |
+          gcloud auth configure-docker us-east1-docker.pkg.dev --quiet
+
+      # Build and push the image tagged with the commit SHA for absolute tracking
+      - name: Build and Push Docker Image [1]
+        run: |
+          docker build -t ${{ env.GAR_REPO }}/thursday-app:${{ github.sha }} .
+          docker tag ${{ env.GAR_REPO }}/thursday-app:${{ github.sha }} ${{ env.GAR_REPO }}/thursday-app:latest
+          docker push ${{ env.GAR_REPO }}/thursday-app:${{ github.sha }}
+          docker push ${{ env.GAR_REPO }}/thursday-app:latest
+  apply_app:
+    name: "03 - Deploy GKE Workloads"
+    needs: build_and_push
+    runs-on: [self-hosted, thursday-app-runner]
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Create tfvars
+        env:
+          RAW_TFVARS: ${{ secrets.TFVARS_FILE }}
+        run: |
+          printf "%s\n" "$RAW_TFVARS" > terraform.tfvars
+
+      - name: Terraform Init
+        run: terraform init -upgrade
+
+      - name: Terraform Apply (App Deploy) [1]
+        run: terraform apply -var="image_tag=${{ github.sha }}" -auto-approve -input=false
