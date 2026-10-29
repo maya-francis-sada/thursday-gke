@@ -1,6 +1,6 @@
 import {
   to = module.mysql_instance.google_sql_database_instance.default
-  id = "projects/686738806484/instances/thursday-maya-sql-instance"
+  id = "modern-nation-510807-e9/thursday-maya-sql-instance"
 }
 
 module "mysql_instance" {
