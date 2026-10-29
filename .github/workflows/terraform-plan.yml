@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./02-repo-infra
+        working-directory: ./foundation
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -104,7 +104,7 @@ jobs:
     runs-on: [self-hosted, thursday-app-runner]
     defaults:
       run:
-        working-directory: ./03-app-deployment
+        working-directory: ./frontend
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
