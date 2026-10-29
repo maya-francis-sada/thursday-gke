@@ -1,3 +1,8 @@
+import {
+  to = module.mysql_instance.google_sql_database_instance.default
+  id = "projects/686738806484/instances/thursday-maya-sql-instance"
+}
+
 module "mysql_instance" {
   source  = "GoogleCloudPlatform/sql-db/google//modules/mysql"
   version = "~> 22.0"
