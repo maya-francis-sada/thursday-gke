@@ -24,7 +24,7 @@ module "mysql_instance" {
   database_version = "MYSQL_8_0"
 
   tier              = var.sql_tier
-  disk_size         = 1
+  disk_size         = 10
   disk_type         = "PD_SSD"
   availability_type = "ZONAL"
 
