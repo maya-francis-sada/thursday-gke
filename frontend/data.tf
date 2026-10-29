@@ -10,3 +10,8 @@ data "terraform_remote_state" "foundation" {
     prefix = "foundation"
   }
 }
+
+data "google_container_cluster" "primary" {
+  name    = "wordpress-gke-cluster"
+  project = var.gcp_prj_id
+}
