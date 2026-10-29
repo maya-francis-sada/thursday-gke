@@ -2,7 +2,7 @@ module "mysql_instance" {
   source  = "GoogleCloudPlatform/sql-db/google//modules/mysql"
   version = "~> 22.0"
 
-  name             = "thursday-sql-instance"
+  name             = "thursday-maya-sql-instance"
   project_id       = var.gcp_prj_id
   region           = var.gcp_region
   database_version = "MYSQL_8_0"
