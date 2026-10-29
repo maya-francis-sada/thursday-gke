@@ -4,7 +4,7 @@ resource "random_password" "db_password" {
 }
 
 resource "google_secret_manager_secret" "db_secret" {
-  secret_id = "thursday-db-password"
+  secret_id = var.secret_id
 
   replication {
     auto {}
