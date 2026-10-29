@@ -15,7 +15,7 @@ module "mysql_instance" {
   ip_configuration = {
     ipv4_enabled        = false
     private_network     = data.google_compute_network.gke_vpc.id
-    allocated_ip_range  = "google-services-range"
+    allocated_ip_range  = "google-services-range-thursday"
     require_ssl         = false
     authorized_networks = []
   }
