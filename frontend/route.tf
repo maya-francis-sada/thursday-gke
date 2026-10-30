@@ -9,10 +9,11 @@ resource "kubernetes_manifest" "thursday_httproute" {
     spec = {
       parentRefs = [
         {
-          group     = "gateway.networking.k8s.io"
-          kind      = "Gateway"
-          name      = "internal-http-gateway"
-          namespace = "gateway-infra"
+          group       = "gateway.networking.k8s.io"
+          kind        = "Gateway"
+          name        = "internal-http-gateway"
+          namespace   = "gateway-infra"
+          sectionName = "https"
         }
       ]
       rules = [
