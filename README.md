@@ -1,32 +1,51 @@
-# 🚀 Thursday GKE App — Private Microservices Architecture
 
-This repository contains a production-grade, decoupled, multi-tier microservices platform deployed on a fully private Google Kubernetes Engine (GKE) cluster.
+# 🚀 Thursday GKE App — Private Microservices Architecture (with TLS & HTTP Redirects)
 
-The infrastructure, networking, container registry, database provisioning, and Kubernetes workloads are managed entirely declaratively using Terraform and automated end-to-end via a custom GitHub Actions CI/CD pipeline using a secure self-hosted runner.
+This repository contains a production-grade, decoupled, multi-tier microservices platform deployed on a **fully private Google Kubernetes Engine (GKE) cluster**.
+
+The infrastructure, private VPC peering, container registry, Cloud SQL database, Secret Manager integration, and Kubernetes Gateway API routing (including **TLS termination** and **HTTP-to-HTTPS redirects**) are managed declaratively using Terraform and deployed via a self-hosted GitHub Actions runner inside the private VPC.
 
 ---
 
-## 🗺️ System Architecture
+## 🗺️ System & Traffic Flow Architecture
 
-Our platform utilizes **Cross-Namespace Routing** with GKE's implementation of the modern **Kubernetes Gateway API** (`gateway.networking.k8s.io`). This allows multiple decoupled application teams to expose their services over different URL paths while sharing a single, cost-effective Google-managed Internal Layer 7 Load Balancer.
+Our platform uses **Cross-Namespace Routing** with GKE's implementation of the **Kubernetes Gateway API** (`gateway.networking.k8s.io/v1`). Multiple decoupled application teams expose their services on different URL paths while sharing a single Google-managed **Regional Internal Application Load Balancer (`gke-l7-rilb`)**.
 
-```
-                         [ USER BROWSER ]
-                                │
-                                ▼ (Secure SSH Port-Forward Tunnel)
-                     [ http://localhost:8080 ]
-                                │
-                                ▼ (Through Private Runner VM Bridge)
-             [ GKE Shared Internal Gateway (gke-l7-rilb) ]
-                   (Internal Load Balancer IP: 10.10.x.x)
-                        /                     \
-        Path: "/"      /                       \    Path: "/thursday"
-                      ▼                         ▼
-         [ Namespace: wordpress-app ]     [ Namespace: thursday-app ]
-               WordPress Pod                    Thursday App Pod
-                     │                                  │
-                     ▼ (Port 3306)                      ▼ (Port 3306 - Private IP)
-                [ MySQL Pod ]                     [ Managed Cloud SQL ]
+```text
+                             [ USER WORKSTATION (Mac) ]
+                                    │          │
+       (HTTP Test: localhost:8080)  │          │  (HTTPS App: localhost:8443)
+                                    ▼          ▼
+              ══════════ [ GCP Cloud IAP Encrypted SSH Tunnel ] ══════════
+                                    │          │
+                                    ▼          ▼
+                       [ Private Self-Hosted Runner VM ]
+                         (Forwards 8080->80 & 8443->443)
+                                    │          │
+                                    ▼          ▼
+         ┌────────────────────────────────────────────────────────────────┐
+         │     GKE SHARED INTERNAL GATEWAY (Namespace: gateway-infra)     │
+         │            (Regional Internal Envoy LB: 10.0.0.28)             │
+         │                                                                │
+         │  ┌──────────────────────────┐    ┌──────────────────────────┐  │
+         │  │ Listener 1: HTTP (80)    │    │ Listener 2: HTTPS (443)  │  │
+         │  │ sectionName: "http"      │    │ sectionName: "https"     │  │
+         │  └────────────┬─────────────┘    └────────────┬─────────────┘  │
+         └───────────────┼───────────────────────────────┼────────────────┘
+                         │                               │
+                         ▼                               ▼ (TLS Terminated via K8s Secret)
+         ┌──────────────────────────────┐        ┌───────┴────────────────────────┐
+         │ HTTPRoute: Redirect Filter   │        │   URL Map Path Evaluation      │
+         │ Returns: 301 Moved Perm      │        └───┬────────────────────────┬───┘
+         │ Location: https://...        │            │                        │
+         └──────────────────────────────┘            │ Path: "/"              │ Path: "/thursday"
+                                                     ▼                        ▼
+                                      [ Namespace: wordpress-app ]  [ Namespace: thursday-app ]
+                                         Service: wordpress:80        Service: thursday-service:8080
+                                         (Direct NEG to Pod IP)       (Direct NEG to Pod IP)
+                                                     │                        │
+                                                     ▼ (Port 3306)            ▼ (Private Peering IP: 3306)
+                                              [ MySQL Pod ]          [ Managed Cloud SQL Instance ]
 ```
 
 ### 🔒 Core Architectural & Security Pillars
@@ -49,35 +68,35 @@ Our platform utilizes **Cross-Namespace Routing** with GKE's implementation of t
 ```text
 thursday-gke/
 ├── .github/workflows/
-│   ├── terraform-plan.yml      # CI pipeline (checks paths, validates syntax)
-│   └── terraform-apply.yml     # CD pipeline (builds image, deploys infra + apps)
+│   ├── terraform-plan.yml      # CI pipeline (path checks, format, validate, plan)
+│   └── terraform-apply.yml     # CD pipeline (applies infra, builds/pushes image, deploys K8s)
 │
-├── app-files/                  # Thursday Python web application files
-│   ├── app.py                  # Lightweight Flask API writing to Cloud SQL
-│   ├── Dockerfile              # Packages app.py with Gunicorn
-│   └── requirements.txt        # Python app dependencies (Flask, PyMySQL, etc.)
+├── app-files/                  # Thursday Python web application source
+│   ├── app.py                  # Flask app serving /thursday and /healthz, writing to Cloud SQL
+│   ├── Dockerfile              # Container build instructions with Gunicorn
+│   └── requirements.txt        # Python dependencies (Flask, PyMySQL, Cryptography, Gunicorn)
 │
-├── foundation/                 # Network & GCS backend layer (applied once)
-│   ├── backend.tf              # Points to GCS bucket under "thursday-foundation"
-│   ├── cloudsql.tf             # Managed Private Cloud SQL MySQL 8.0 Instance
-│   ├── registry.tf             # Artifact Registry Docker repo ("thursday-repo")
-│   ├── secret-manager.tf       # Secret Manager container for database password
-│   ├── iam.tf                  # Secure service accounts and WIF policy bindings
+├── foundation/                 # Cloud Infrastructure layer (State prefix: thursday-foundation)
+│   ├── backend.tf              # GCS remote state configuration
+│   ├── cloudsql.tf             # Private Cloud SQL MySQL 8.0 instance & database module
+│   ├── data.tf                 # GCP network and service account data lookups
+│   ├── iam.tf                  # Cloud SQL client & Secret Manager IAM bindings
 │   ├── providers.tf            # Google & Random provider configurations
-│   ├── variables.tf            # Variables declarations
-│   └── terraform.tfvars        # General configuration values
+│   ├── registry.tf             # Artifact Registry Docker repository
+│   ├── secret-manager.tf       # Random password generator & GCP Secret Manager version
+│   └── variables.tf            # Infrastructure input variables
 │
-├── frontend/                   # Kubernetes app deployment layer (day-to-day)
-│   ├── app.tf                  # Deployment, Service, and K8s secrets
-│   ├── backend.tf              # Points to GCS bucket under "thursday-app-k8s"
-│   ├── data.tf                 # Queries active GCP APIs to dynamically find GKE and SQL
-│   ├── route.tf                # HTTPRoute mapping /thursday to thursday-service
-│   ├── secret.tf               # Mounts GCP Secret Manager password as K8s Secret
-│   ├── providers.tf            # GKE dynamic credential handshake
-│   ├── variables.tf            # App variables declarations
-│   └── terraform.tfvars        # App deployment variables
+├── frontend/                   # Kubernetes Deployment layer (State prefix: thursday-app-k8s)
+│   ├── app.tf                  # Namespace, K8s Deployment, and NEG-enabled ClusterIP Service
+│   ├── backend.tf              # GCS remote state configuration
+│   ├── data.tf                 # Dynamic lookups for GKE cluster, Cloud SQL IP, and Secret Manager
+│   ├── providers.tf            # Dynamic OAuth2 token handshake with private GKE master
+│   ├── route.tf                # HTTPRoute binding /thursday to the Gateway's "https" listener
+│   ├── secret.tf               # Injects GCP Secret Manager payload into K8s Secret
+│   └── variables.tf            # Workload input variables (including image_tag)
 │
-└── .gitignore                  # Shared gitignore to block local workspace caches
+├── .gitignore                  # Excludes .terraform caches, state files, and .tfvars
+└── README.md                   # Project documentation
 ```
 
 ---
@@ -86,42 +105,59 @@ thursday-gke/
 
 Because your entire application and Gateway operate in a fully private network, your GKE shared gateway has no public IP address. To access the webpages on your local Mac's web browser, you must create a secure secure **SSH Port-Forwarding Tunnel** through your self-hosted runner VM:
 
-### Step 1: Find GKE Gateway's Private IP
-SSH into the private runner VM:
-```bash
-gcloud compute ssh gke-private-runner \
-  --zone=us-east1-b \
-  --project=modern-nation-510807-e9 \
-  --tunnel-through-iap
-```
+### Step 1: Open the Dual-Port IAP SSH Tunnel
+Run this command in your local Mac terminal and leave the window open:
 
-Once inside the VM, query the GKE controller to obtain the private IP address of your Gateway:
 ```bash
-kubectl get gateway -n gateway-infra
-```
-*Note the IP address listed in the **`ADDRESS`** column (e.g., `10.10.x.x`). Exit the VM.*
-```bash
-exit
-```
-
-### Step 2: Establish the SSH Port-Forward Tunnel
-Run this command directly in your **local Mac terminal**, replacing `<INTERNAL_GATEWAY_IP>` with the IP address retrieved from the step above:
-```bash
-gcloud compute ssh gke-private-runner \
+gcloud compute ssh github-self-hosted-runner \
   --zone=us-east1-b \
   --project=modern-nation-510807-e9 \
   --tunnel-through-iap \
-  -- -N -L 8080:<INTERNAL_GATEWAY_IP>:80
+  -- -N -L 8080:10.0.0.28:80 -L 8443:10.0.0.28:443
 ```
-*Note: The `-N` flag tells SSH not to spawn a terminal shell but to keep the tunnel open in the background. Leave this terminal window running.*
 
-### Step 3: Open Your Browser and Test Both Sites!
-While the tunnel is running, open your web browser on your Mac and navigate to:
+### Step 2: Verify the HTTP-to-HTTPS `301` Redirect (Port 8080 $\rightarrow$ Port 80)
+In a new terminal tab on your Mac, run `curl -I` against the plain HTTP tunnel port:
 
-- 🌐 **To view your WordPress site:**  
-  👉 [http://localhost:8080/](http://localhost:8080/)  
-  *(Routes over the GKE gateway directly to your `wordpress-app` namespace)*
+```bash
+curl -I http://localhost:8080/thursday
+```
 
-- 🚀 **To view your Thursday app and write to Cloud SQL:**  
-  👉 [http://localhost:8080/thursday](http://localhost:8080/thursday)  
-  *(Routes over GKE gateway to `thursday-app` namespace, writes "Maya" to Cloud SQL, and displays database rows in real time!)*
+**Expected Output:**
+```http
+HTTP/1.1 301 Moved Permanently
+location: https://localhost:8080/thursday
+date: Fri, 30 Oct 2026 06:48:38 GMT
+via: 1.1 google
+```
+*(Note: In a local SSH tunnel, the browser cannot follow `https://localhost:8080` automatically because local port `8080` is mapped to plain HTTP port `80`. In production with standard DNS on ports `80`/`443`, the browser follows this redirect seamlessly).*
+
+## 🔐 How TLS Termination & HTTP-to-HTTPS Redirects Work
+
+### 1. Declarative TLS Key & Certificate Generation
+Because the GKE cluster and internal load balancer live strictly inside a private RFC 1918 network (`10.0.0.28`) with no public DNS or internet exposure, public Certificate Authorities (like Let's Encrypt) cannot reach into the VPC to perform ACME challenges.
+* Instead, Terraform dynamically generates a **2048-bit RSA Private Key** (`tls_private_key`) and a **Self-Signed X.509 Certificate** (`tls_self_signed_cert`).
+* Terraform stores the certificate and private key inside a Kubernetes Secret (`type = "kubernetes.io/tls"`) named **`gateway-tls-cert`** in the `gateway-infra` namespace.
+
+### 2. Dual-Listener Gateway Configuration
+The shared `Gateway` (`internal-http-gateway`) configures two distinct listeners on the underlying Google Cloud Envoy proxy load balancer:
+* **Listener 1 (`name: "http"`, Port `80`, Protocol `HTTP`):** Accepts unencrypted HTTP requests strictly for the purpose of redirecting clients to HTTPS.
+* **Listener 2 (`name: "https"`, Port `443`, Protocol `HTTPS`):** References the `gateway-tls-cert` Kubernetes Secret with `tls.mode = "Terminate"`.
+  * **Why Terminate at the Gateway?** The Google-managed Envoy proxy handles the heavy cryptographic SSL/TLS decryption at the edge of the cluster and forwards lightweight, unencrypted HTTP traffic over the private VPC network directly to the Pod IPs via **Network Endpoint Groups (NEGs)**.
+
+### 3. Step-by-Step Packet Flow: HTTP Redirect vs. HTTPS Request
+
+#### Flow A: When a User Requests `http://...` (Port 80 Redirect Flow)
+1. **Packet Arrival:** The client sends a plain HTTP request to port `80` on the Internal Gateway.
+2. **Listener Match:** The Gateway matches the request to the `sectionName = "http"` listener.
+3. **Route Interception:** The `http-to-https-redirect` `HTTPRoute` (which is bound strictly to `sectionName = "http"`) intercepts the packet before it ever reaches a backend pod.
+4. **301 Redirect Response:** The route's `RequestRedirect` filter immediately returns an **`HTTP/1.1 301 Moved Permanently`** status code with the response header `Location: https://<host>/<path>`.
+   * *Why 301 instead of 302?* A `301` is a permanent redirect, instructing the browser to cache the redirect locally so future requests automatically use HTTPS without making an unencrypted network trip first.
+
+#### Flow B: When a User Requests `https://...` (Port 443 Application Flow)
+1. **TLS Handshake:** The client initiates a TLS handshake on port `443`. The Gateway's `https` listener presents the certificate from `gateway-tls-cert` and establishes an encrypted session.
+2. **TLS Termination & L7 Inspection:** Envoy decrypts the payload and inspects the HTTP URI path:
+   * If the path starts with **`/thursday`**, it matches `thursday-httproute` (bound to `sectionName = "https"` in the `thursday-app` namespace).
+   * If the path starts with **`/`**, it matches `wordpress-httproute` (bound to `sectionName = "https"` in the `wordpress-app` namespace).
+3. **Container-Native Load Balancing (NEG):** Using the `cloud.google.com/neg: '{"ingress": true}'` annotation on the Kubernetes Service, the Envoy proxy bypasses `kube-proxy` and NodePort hops entirely, routing the request directly to a healthy Pod's private IP (`10.20.x.x:8080`).
+4. **Cloud SQL Write:** The Python Flask container reads its database credentials from in-memory environment variables (populated from **GCP Secret Manager**), connects to the **Cloud SQL Private IP** over the **Private Services Access (VPC Peering)** bridge, writes the visitor's name, and returns the rendered HTML table.
