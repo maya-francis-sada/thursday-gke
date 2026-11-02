@@ -14,6 +14,13 @@ resource "kubernetes_manifest" "thursday_httproute" {
           name        = "internal-http-gateway"
           namespace   = "gateway-infra"
           sectionName = "https"
+        },
+        {
+          group       = "gateway.networking.k8s.io"
+          kind        = "Gateway"
+          name        = "external-http-gateway"
+          namespace   = "gateway-infra"
+          sectionName = "https"
         }
       ]
       rules = [
